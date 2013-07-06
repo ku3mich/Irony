@@ -11,7 +11,7 @@ namespace Irony.Samples {
   // * Automatic paragraphs
   // * Linked images
   [Language("Wiki-Creole", "1.0", "Wiki/Creole markup grammar.")]
-  public class WikiCreoleGrammar : Grammar {
+  public class WikiCreoleGrammar : Grammar, ICanRunSample {
 
     public WikiCreoleGrammar() {
       this.GrammarComments = 
@@ -76,18 +76,22 @@ http://www.wikicreole.org/";
       wikiText.Rule = MakeStarRule(wikiText, wikiElement); 
 
       this.Root =  wikiText; 
-      this.WhitespaceChars = string.Empty;
       MarkTransient(wikiElement); 
       //We need to clear punctuation flag on NewLine, so it is not removed from parse tree
       NewLine.SetFlag(TermFlags.IsPunctuation, false); 
-      this.LanguageFlags |= LanguageFlags.DisableScannerParserLink | LanguageFlags.NewLineBeforeEOF | LanguageFlags.CanRunSample;
+      this.LanguageFlags |= LanguageFlags.DisableScannerParserLink | LanguageFlags.NewLineBeforeEOF;
  
     }
 
-    public override string RunSample(ParseTree parsedSample) {
+    public override void SkipWhitespace(ISourceStream source) {
+      return; //no whitespaces at all
+    }
+
+
+    public string RunSample(RunSampleArgs args) {
       var converter = new WikiHtmlConverter();
-      PreprocessTokens(parsedSample.Tokens); 
-      var html = converter.Convert(this, parsedSample.Tokens);
+      PreprocessTokens(args.ParsedSample.Tokens); 
+      var html = converter.Convert(this, args.ParsedSample.Tokens);
       var path = Path.Combine(Path.GetTempPath(), "@wikiSample.html");
       File.WriteAllText(path, html);
       System.Diagnostics.Process.Start(path); 

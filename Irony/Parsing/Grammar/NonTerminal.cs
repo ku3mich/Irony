@@ -13,7 +13,8 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
-using System.Reflection; 
+using System.Reflection;
+using Irony.Ast; 
 
 namespace Irony.Parsing {
 
@@ -48,6 +49,18 @@ namespace Irony.Parsing {
     //Converted template with index list
     private string _convertedTemplate;
     private IntList _captionParameters;
+
+    // Productions are used internally by Parser builder
+    internal ProductionList Productions = new ProductionList();
+    #endregion
+
+    #region Events: Reduced
+    //Note that Reduced event may be called more than once for a List node 
+    public event EventHandler<ReducedEventArgs> Reduced;
+    internal void OnReduced(ParsingContext context, Production reducedProduction, ParseTreeNode resultNode) {
+      if (Reduced != null)
+        Reduced(this, new ReducedEventArgs(context, reducedProduction, resultNode));
+    }
     #endregion
 
     #region overrides: ToString, Init
@@ -57,22 +70,21 @@ namespace Irony.Parsing {
     public override void Init(GrammarData grammarData) {
       base.Init(grammarData);
       if (!string.IsNullOrEmpty(NodeCaptionTemplate))
-        ConvertNodeCaptionTemplate(); 
+        ConvertNodeCaptionTemplate();
     }
     #endregion
 
-    #region data used by Parser builder
-    public readonly ProductionList Productions = new ProductionList();
-    #endregion
-
-    public static string NonTerminalsToString(IEnumerable<NonTerminal> terms, string separator) {
-      var sb = new StringBuilder();
-      foreach (var term in terms) {
-        sb.Append(term.ToString());
-        sb.Append(separator);
-      }
-      return sb.ToString().Trim();
+    // Contributed by Alexey Yakovlev (yallie)
+    #region Grammar hints
+    // Adds a hint at the end of all productions
+    public void AddHintToAll(GrammarHint hint) {
+      if (this.Rule == null)
+        throw new Exception("Rule property must be set on non-terminal before calling AddHintToAll.");
+      foreach (var plusList in this.Rule.Data)
+        plusList.Add(hint);
     }
+
+    #endregion
 
     #region NodeCaptionTemplate utilities
     //We replace original tag '#{i}'  (where i is the index of the child node to put here)
@@ -113,13 +125,13 @@ namespace Irony.Parsing {
 
   public class NonTerminalList : List<NonTerminal> {
     public override string ToString() {
-      return NonTerminal.NonTerminalsToString(this, " "); 
+      return string.Join(" ", this); 
     }
   }
 
   public class NonTerminalSet : HashSet<NonTerminal> {
     public override string ToString() {
-      return NonTerminal.NonTerminalsToString(this, " "); 
+      return string.Join(" ", this);
     }
   }
 

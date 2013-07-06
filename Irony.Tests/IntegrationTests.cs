@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using Irony.Parsing;
-using Irony.Ast;
+using Irony.Interpreter.Ast;
 
 //Tests of Visual Studio integration functionality
 
@@ -54,7 +54,7 @@ namespace Irony.Tests {
     }
 
     [TestMethod]
-    public void TestVsScanningComment() {
+    public void TestIntegration_VsScanningComment() {
       Init(new IntegrationTestGrammar());
       SetSource(" /*  ");
       Token token = Read();
@@ -76,7 +76,7 @@ namespace Irony.Tests {
     }
 
     [TestMethod]
-    public void TestVsScanningString() {
+    public void TestIntegration_VsScanningString() {
       Init(new IntegrationTestGrammar());
       SetSource(" 'abc");
       Token token = Read();

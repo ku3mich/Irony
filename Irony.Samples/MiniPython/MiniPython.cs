@@ -14,7 +14,8 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using Irony.Parsing;
-using Irony.Ast;
+using Irony.Interpreter;
+using Irony.Interpreter.Ast;
 
 namespace Irony.Samples.MiniPython {
   // The grammar for a very small subset of Python. This is work in progress, 
@@ -25,8 +26,8 @@ namespace Irony.Samples.MiniPython {
   // Python is important test case for Irony as an indentation-sensitive language.
 
   [Language("MiniPython", "0.2", "Micro-subset of Python, work in progress")]
-  public class MiniPythonGrammar : Irony.Parsing.Grammar {
-    public MiniPythonGrammar() {
+  public class MiniPythonGrammar : InterpretedLanguageGrammar {
+    public MiniPythonGrammar() : base(caseSensitive: true) {
 
       // 1. Terminals
       var number = TerminalFactory.CreatePythonNumber("number");
@@ -51,7 +52,7 @@ namespace Irony.Samples.MiniPython {
       var ExtStmt = new NonTerminal("ExtStmt");
       //Just as a test for NotSupportedNode
       var ReturnStmt = new NonTerminal("return", typeof(NotSupportedNode));
-      var Block = new NonTerminal("Block", typeof(BlockNode));
+      var Block = new NonTerminal("Block");
       var StmtList = new NonTerminal("StmtList", typeof(StatementListNode));
 
       var ParamList = new NonTerminal("ParamList", typeof(ParamListNode));
@@ -69,7 +70,7 @@ namespace Irony.Samples.MiniPython {
       BinExpr.Rule = Expr + BinOp + Expr;
       BinOp.Rule = ToTerm("+") | "-" | "*" | "/" | "**";
       AssignmentStmt.Rule = identifier + "=" + Expr;
-      Stmt.Rule = AssignmentStmt | Expr | ReturnStmt;
+      Stmt.Rule = AssignmentStmt | Expr | ReturnStmt | Empty;
       ReturnStmt.Rule = "return" + Expr; //Not supported for execution! - we associate NotSupportedNode with ReturnStmt
       //Eos is End-Of-Statement token produced by CodeOutlineFilter
       ExtStmt.Rule = Stmt + Eos | FunctionDef;
@@ -85,8 +86,8 @@ namespace Irony.Samples.MiniPython {
 
       this.Root = StmtList;       // Set grammar root
 
-      // 4. Token filter
-      //we need to add continuation symbol to NonGrammarTerminals because it is not used anywhere in grammar
+      // 4. Token filters - created in a separate method CreateTokenFilters
+      //    we need to add continuation symbol to NonGrammarTerminals because it is not used anywhere in grammar
       NonGrammarTerminals.Add(ToTerm(@"\"));
 
       // 5. Operators precedence
@@ -97,7 +98,7 @@ namespace Irony.Samples.MiniPython {
       // 6. Miscellaneous: punctuation, braces, transient nodes
       MarkPunctuation("(", ")", ":");
       RegisterBracePair("(", ")");
-      MarkTransient(Term, Expr, Stmt, ExtStmt, UnOp, BinOp, ExtStmt, ParExpr);
+      MarkTransient(Term, Expr, Stmt, ExtStmt, UnOp, BinOp, ExtStmt, ParExpr, Block);
 
       // 7. Error recovery rule
       ExtStmt.ErrorRule = SyntaxError + Eos;
@@ -123,8 +124,8 @@ Press Ctrl-C to exit the program at any time.
       ConsolePrompt = ">>>"; 
       ConsolePromptMoreInput = "..."; 
       
-      //Note: changed in Mar 2010, we no longer have to disable scanner/parser link
-      this.LanguageFlags = LanguageFlags.CreateAst | LanguageFlags.CanRunSample;
+      // 10. Language flags
+      this.LanguageFlags = LanguageFlags.NewLineBeforeEOF | LanguageFlags.CreateAst | LanguageFlags.SupportsBigInt;
 
     }//constructor
 
@@ -132,9 +133,9 @@ Press Ctrl-C to exit the program at any time.
       var outlineFilter = new CodeOutlineFilter(language.GrammarData, 
         OutlineOptions.ProduceIndents | OutlineOptions.CheckBraces, ToTerm(@"\")); // "\" is continuation symbol
       filters.Add(outlineFilter);
-      
     }
-  }
+
+  }//class
 }//namespace
 
 

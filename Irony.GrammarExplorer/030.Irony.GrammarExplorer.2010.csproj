@@ -61,6 +61,9 @@
     <CodeAnalysisRuleSet>AllRules.ruleset</CodeAnalysisRuleSet>
   </PropertyGroup>
   <ItemGroup>
+    <Reference Include="FastColoredTextBox">
+      <HintPath>..\Libraries\FastColoredTextBox\FastColoredTextBox.dll</HintPath>
+    </Reference>
     <Reference Include="System" />
     <Reference Include="System.Core">
       <RequiredTargetFramework>3.5</RequiredTargetFramework>
@@ -85,8 +88,11 @@
       <DependentUpon>fmSelectGrammars.cs</DependentUpon>
     </Compile>
     <Compile Include="GrammarItemList.cs" />
+    <Compile Include="GrammarLoader.cs" />
     <Compile Include="Highlighter\EditorAdapter.cs" />
     <Compile Include="Highlighter\EditorViewAdapter.cs" />
+    <Compile Include="Highlighter\FastColoredTextBoxHighlighter.cs" />
+    <Compile Include="Highlighter\WavyLineStyle.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <EmbeddedResource Include="fmGrammarExplorer.resx">
@@ -132,6 +138,10 @@
     <None Include="Highlighter\AboutCodeHighlighter.txt" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\Irony.Interpreter\015.Irony.Interpreter.2010.csproj">
+      <Project>{321A7F5D-00C2-4095-9970-075CDEE8C139}</Project>
+      <Name>015.Irony.Interpreter.2010</Name>
+    </ProjectReference>
     <ProjectReference Include="..\Irony\010.Irony.2010.csproj">
       <Project>{D81F5C91-D7DB-46E5-BC99-49488FB6814C}</Project>
       <Name>010.Irony.2010</Name>
@@ -155,7 +165,7 @@
     </BootstrapperPackage>
   </ItemGroup>
   <Import Project="$(MSBuildBinPath)\Microsoft.CSharp.targets" />
-  <!-- To modify your build process, add your task inside one of the targets below and uncomment it.
+  <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 
        Other similar extension points exist, see Microsoft.Common.targets.
   <Target Name="BeforeBuild">
   </Target>

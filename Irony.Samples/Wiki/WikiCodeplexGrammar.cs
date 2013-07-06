@@ -8,7 +8,7 @@ using Irony.Parsing;
 namespace Irony.Samples {
 
   [Language("Wiki-Codeplex", "1.0", "Wiki/Codeplex markup grammar.")]
-  public class WikiCodeplexGrammar : Grammar {
+  public class WikiCodeplexGrammar : Grammar, ICanRunSample {
     public WikiCodeplexGrammar() {
       this.GrammarComments = 
 @"A grammar for reading codeplex wiki files and transforming them into HTML 
@@ -92,17 +92,20 @@ http://wikiplex.codeplex.com
       wikiText.Rule = MakeStarRule(wikiText, wikiElement); 
 
       this.Root =  wikiText; 
-      this.WhitespaceChars = string.Empty;
       MarkTransient(wikiElement); 
       //We need to clear punctuation flag on NewLine, so it is not removed from parse tree
       NewLine.SetFlag(TermFlags.IsPunctuation, false); 
-      this.LanguageFlags |= LanguageFlags.DisableScannerParserLink | LanguageFlags.NewLineBeforeEOF | LanguageFlags.CanRunSample;
+      this.LanguageFlags |= LanguageFlags.DisableScannerParserLink | LanguageFlags.NewLineBeforeEOF;
  
     }
 
-    public override string RunSample(ParseTree parsedSample) {
+    public override void SkipWhitespace(ISourceStream source) {
+      return; //no whitespaces at all
+    }
+
+    public string RunSample(RunSampleArgs args) {
       var converter = new WikiHtmlConverter();
-      var html = converter.Convert(this, parsedSample.Tokens);
+      var html = converter.Convert(this, args.ParsedSample.Tokens);
       var path = Path.Combine(Path.GetTempPath(), "@wikiSample.html");
       File.WriteAllText(path, html);
       System.Diagnostics.Process.Start(path);

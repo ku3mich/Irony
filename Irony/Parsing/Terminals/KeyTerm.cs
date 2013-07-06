@@ -27,11 +27,10 @@ namespace Irony.Parsing {
     public KeyTerm(string text, string name)  : base(name) {
       Text = text;
       base.ErrorAlias = name;
-
+      this.Flags |= TermFlags.NoAstNode;
     }
 
     public string Text {get; private set;}
-    public Symbol Symbol { get; private set; }
 
     //Normally false, meaning keywords (symbols in grammar consisting of letters) cannot be followed by a letter or digit
     public bool AllowAlphaAfterKeyword = false; 
@@ -39,7 +38,6 @@ namespace Irony.Parsing {
     #region overrides: TryMatch, Init, GetPrefixes(), ToString() 
     public override void Init(GrammarData grammarData) {
       base.Init(grammarData);
-      this.Symbol = SymbolTable.Symbols.TextToSymbol(Text); 
 
       #region comments about keyterms priority
       // Priority - determines the order in which multiple terminals try to match input for a given current char in the input.
@@ -51,39 +49,38 @@ namespace Irony.Parsing {
       // As a result, Scanner would first try to match "+=", longer symbol, and if it fails, it will try "+". 
       // Reserved words are the opposite - they have the highest priority
       #endregion
-      if (FlagIsSet(TermFlags.IsReservedWord)) 
-        base.Priority = ReservedWordsPriority + Text.Length;
+      if (Flags.IsSet(TermFlags.IsReservedWord)) 
+        base.Priority = TerminalPriority.ReservedWords + Text.Length; //the longer the word, the higher is the priority
       else 
-        base.Priority = LowestPriority + Text.Length;
+        base.Priority = TerminalPriority.Low + Text.Length;
       //Setup editor info      
       if (this.EditorInfo != null) return;
       TokenType tknType = TokenType.Identifier;
-      if (FlagIsSet(TermFlags.IsOperator))
+      if (Flags.IsSet(TermFlags.IsOperator))
         tknType |= TokenType.Operator; 
-      else if (FlagIsSet(TermFlags.IsDelimiter | TermFlags.IsPunctuation))
+      else if (Flags.IsSet(TermFlags.IsDelimiter | TermFlags.IsPunctuation))
         tknType |= TokenType.Delimiter;
       TokenTriggers triggers = TokenTriggers.None;
-      if (this.FlagIsSet(TermFlags.IsBrace))
+      if (this.Flags.IsSet(TermFlags.IsBrace))
         triggers |= TokenTriggers.MatchBraces;
-      if (this.FlagIsSet(TermFlags.IsMemberSelect))
+      if (this.Flags.IsSet(TermFlags.IsMemberSelect))
         triggers |= TokenTriggers.MemberSelect;
       TokenColor color = TokenColor.Text; 
-      if (FlagIsSet(TermFlags.IsKeyword))
+      if (Flags.IsSet(TermFlags.IsKeyword))
         color = TokenColor.Keyword;
       this.EditorInfo = new TokenEditorInfo(tknType, color, triggers);
     }
 
     public override Token TryMatch(ParsingContext context, ISourceStream source) {
-      if (!source.MatchSymbol(Text, !Grammar.CaseSensitive))
+      if (!source.MatchSymbol(Text))
         return null;
       source.PreviewPosition += Text.Length;
       //In case of keywords, check that it is not followed by letter or digit
-      if (this.FlagIsSet(TermFlags.IsKeyword) && !AllowAlphaAfterKeyword) {
+      if (this.Flags.IsSet(TermFlags.IsKeyword) && !AllowAlphaAfterKeyword) {
         var previewChar = source.PreviewChar;
         if (char.IsLetterOrDigit(previewChar) || previewChar == '_') return null; //reject
       }
       var token = source.CreateToken(this.OutputTerminal, Text);
-      token.Symbol = this.Symbol;
       return token; 
     }
 
@@ -95,7 +92,7 @@ namespace Irony.Parsing {
       return Text;
     }
     public override string TokenToString(Token token) {
-      var keyw = FlagIsSet(TermFlags.IsKeyword)? Resources.LabelKeyword : Resources.LabelKeySymbol ; //"(Keyword)" : "(Key symbol)"
+      var keyw = Flags.IsSet(TermFlags.IsKeyword)? Resources.LabelKeyword : Resources.LabelKeySymbol ; //"(Keyword)" : "(Key symbol)"
       var result = (token.ValueString ?? token.Text) + " " + keyw;
       return result; 
     }

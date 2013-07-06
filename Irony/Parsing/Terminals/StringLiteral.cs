@@ -14,6 +14,7 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using System.Diagnostics;
+using Irony.Ast;
 
 namespace Irony.Parsing {
 
@@ -36,10 +37,9 @@ namespace Irony.Parsing {
   // like in Ruby:
   // "Hello, #{name}"
   // Default values match settings for Ruby strings
-  public class StringTemplateSettings : Ast.AstNodeConfig {
+  public class StringTemplateSettings {
     public string StartTag = "#{";
     public string EndTag = "}";
-    public Type AstNodeType = typeof(Ast.StringTemplateNode);
     public NonTerminal ExpressionRoot;
   }
 
@@ -78,7 +78,6 @@ namespace Irony.Parsing {
     #region constructors and initialization
     public StringLiteral(string name): base(name) {
       base.SetFlag(TermFlags.IsLiteral);
-      base.AstNodeType = typeof(Irony.Ast.LiteralValueNode);
     }
 
     public StringLiteral(string name, string startEndSymbol, StringOptions options) : this(name) {
@@ -89,11 +88,11 @@ namespace Irony.Parsing {
 
     public StringLiteral(string name, string startEndSymbol, StringOptions options, Type astNodeType) 
           : this(name, startEndSymbol, options) {
-      base.AstNodeType = astNodeType;
+      base.AstConfig.NodeType = astNodeType;
     }
     public StringLiteral(string name, string startEndSymbol, StringOptions options, AstNodeCreator astNodeCreator) 
          : this(name, startEndSymbol, options) {
-      base.AstNodeCreator = astNodeCreator;
+      base.AstConfig.NodeCreator = astNodeCreator;
     }
 
     public void AddStartEnd(string startEndSymbol, StringOptions stringOptions) {
@@ -133,7 +132,7 @@ namespace Irony.Parsing {
         _startSymbolsFirsts += subType.Start[0].ToString();
         if ((subType.Flags & StringOptions.IsTemplate) != 0) isTemplate = true; 
       }
-      if (!CaseSensitive) 
+      if (!CaseSensitivePrefixesSuffixes) 
         _startSymbolsFirsts = _startSymbolsFirsts.ToLower() + _startSymbolsFirsts.ToUpper();
       //Set multiline flag
       foreach (StringSubType info in _subtypes) {
@@ -145,7 +144,7 @@ namespace Irony.Parsing {
       //For templates only
       if(isTemplate) {
         //Check that template settings object is provided
-        var templateSettings = this.AstNodeConfig as StringTemplateSettings;
+        var templateSettings = this.AstConfig.Data as StringTemplateSettings;
         if(templateSettings == null)
           grammarData.Language.Errors.Add(GrammarErrorLevel.Error, null, Resources.ErrTemplNoSettings, this.Name); //"Error in string literal [{0}]: IsTemplate flag is set, but TemplateSettings is not provided."
         else if (templateSettings.ExpressionRoot == null)
@@ -213,7 +212,7 @@ namespace Irony.Parsing {
         
         //Check if it is doubled end symbol
         source.PreviewPosition = endPos;
-        if (details.IsSet((short)StringOptions.AllowsDoubledQuote) && source.MatchSymbol(endQuoteDoubled, !CaseSensitive)) {
+        if (details.IsSet((short)StringOptions.AllowsDoubledQuote) && source.MatchSymbol(endQuoteDoubled)) {
           source.PreviewPosition = endPos + endQuoteDoubled.Length;
           continue;
         }//checking for doubled end symbol
@@ -271,7 +270,7 @@ namespace Irony.Parsing {
       if (_startSymbolsFirsts.IndexOf(source.PreviewChar) < 0)
         return false;
       foreach (StringSubType subType in _subtypes) {
-        if (!source.MatchSymbol(subType.Start, !CaseSensitive))
+        if (!source.MatchSymbol(subType.Start))
           continue; 
         //We found start symbol
         details.StartSymbol = subType.Start;
@@ -396,21 +395,6 @@ namespace Irony.Parsing {
       return segment; 
     }//method
     #endregion
-
-    //Override method to provide different node type for string templates
-    protected override Type GetAstNodeType(ParsingContext context, ParseTreeNode nodeInfo) {
-      var details = nodeInfo.Token.Details as CompoundTokenDetails;
-      //check that IsTemplate flag is set and that the string actually contains embedded expression(s) by checking the start tag
-      var isTemplate = details != null && details.IsSet((short) StringOptions.IsTemplate);
-      if (isTemplate) {
-        var templateSettings = this.AstNodeConfig as StringTemplateSettings;
-        isTemplate &= nodeInfo.Token.ValueString.Contains(templateSettings.StartTag); 
-        if (isTemplate)
-          return templateSettings.AstNodeType;
-      }
-      //otherwise return default type from base method
-      return base.GetAstNodeType(context, nodeInfo); 
-    }//method
 
   }//class
 

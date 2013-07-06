@@ -24,7 +24,7 @@ namespace Irony.Samples.ConsoleCalculator {
       Grammar grammar; 
       switch (choice) {
         case "1": 
-          grammar = new ExpressionEvaluatorGrammar();
+          grammar = new SampleExpressionEvaluatorGrammar();
           break;
         case "2":
           grammar = new MiniPython.MiniPythonGrammar();
@@ -32,8 +32,10 @@ namespace Irony.Samples.ConsoleCalculator {
         default:
           return;
       }
-      Console.Clear(); 
-      var commandLine = new CommandLine(grammar);
+      Console.Clear();
+      var language = new LanguageData(grammar);
+      var runtime = new LanguageRuntime(language);
+      var commandLine = new CommandLine(runtime);
       commandLine.Run();
     }
 

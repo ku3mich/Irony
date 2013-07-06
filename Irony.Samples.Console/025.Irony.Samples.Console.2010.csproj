@@ -39,8 +39,7 @@
     <IsWebBootstrapper>false</IsWebBootstrapper>
     <UseApplicationTrust>false</UseApplicationTrust>
     <BootstrapperEnabled>true</BootstrapperEnabled>
-    <TargetFrameworkProfile>
-    </TargetFrameworkProfile>
+    <TargetFrameworkProfile>Client</TargetFrameworkProfile>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <DebugSymbols>true</DebugSymbols>
@@ -81,6 +80,10 @@
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\Irony.Interpreter\015.Irony.Interpreter.2010.csproj">
+      <Project>{321A7F5D-00C2-4095-9970-075CDEE8C139}</Project>
+      <Name>015.Irony.Interpreter.2010</Name>
+    </ProjectReference>
     <ProjectReference Include="..\Irony.Samples\020.Irony.Samples.2010.csproj">
       <Project>{AD263C0B-99D3-40A9-9DBF-9086CC524A0B}</Project>
       <Name>020.Irony.Samples.2010</Name>
@@ -111,7 +114,7 @@
     <None Include="app.config" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
-  <!-- To modify your build process, add your task inside one of the targets below and uncomment it.
+  <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 
        Other similar extension points exist, see Microsoft.Common.targets.
   <Target Name="BeforeBuild">
   </Target>

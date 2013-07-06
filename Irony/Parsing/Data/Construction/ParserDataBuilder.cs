@@ -24,11 +24,9 @@ namespace Irony.Parsing.Construction {
 
   internal partial class ParserDataBuilder {
     LanguageData _language;
-    internal ParserData Data;
+    ParserData _data;
     Grammar _grammar;
     ParserStateHash _stateHash = new ParserStateHash();
-    LRItemSet _itemsNeedLookaheads = new LRItemSet(); 
-
 
     internal ParserDataBuilder(LanguageData language) {
       _language = language;
@@ -37,13 +35,19 @@ namespace Irony.Parsing.Construction {
 
     public void Build() {
       _stateHash.Clear();
-      Data = _language.ParserData;
-      CreateParserStates(); 
-      ComputeTransitions();
-      ComputeLookaheads();
-      ComputeAndResolveConflicts();
-      CreateRemainingReduceActions(); 
+      _data = _language.ParserData;
+      CreateParserStates();
+      var itemsNeedLookaheads = GetReduceItemsInInadequateState();
+      ComputeTransitions(itemsNeedLookaheads);
+      ComputeLookaheads(itemsNeedLookaheads);
       ComputeStatesExpectedTerminals();
+      ComputeConflicts();
+      ApplyHints(); 
+      HandleUnresolvedConflicts(); 
+      CreateRemainingReduceActions(); 
+      //Create error action - if it is not created yet by some hint or custom code
+      if (_data.ErrorAction == null)
+        _data.ErrorAction = new ErrorRecoveryParserAction();
     }//method
 
     #region Creating parser states
@@ -51,22 +55,23 @@ namespace Irony.Parsing.Construction {
       var grammarData = _language.GrammarData;
 
       //1. Base automaton: create states for main augmented root for the grammar
-      Data.InitialState = CreateInitialState(grammarData.AugmentedRoot);
+      _data.InitialState = CreateInitialState(grammarData.AugmentedRoot);
       ExpandParserStateList(0);
-      CreateAcceptAction(Data.InitialState, grammarData.AugmentedRoot); 
+      CreateAcceptAction(_data.InitialState, grammarData.AugmentedRoot); 
 
       //2. Expand automaton: add parser states from additional roots
       foreach(var augmRoot in grammarData.AugmentedSnippetRoots) {
         var initialState = CreateInitialState(augmRoot);
-        ExpandParserStateList(Data.States.Count - 1); //start with just added state - it is the last state in the list
+        ExpandParserStateList(_data.States.Count - 1); //start with just added state - it is the last state in the list
         CreateAcceptAction(initialState, augmRoot); 
       }
     }
 
     private void CreateAcceptAction(ParserState initialState, NonTerminal augmentedRoot) {
       var root = augmentedRoot.Productions[0].RValues[0];
-      var shiftOverRootState = initialState.Actions[root].NewState;
-      shiftOverRootState.Actions[_grammar.Eof] = new ParserAction(ParserActionType.Accept, null, null); 
+      var shiftAction = initialState.Actions[root] as ShiftParserAction; 
+      var shiftOverRootState = shiftAction.NewState;
+      shiftOverRootState.Actions[_grammar.Eof] = new AcceptParserAction(); 
     }
 
 
@@ -76,14 +81,14 @@ namespace Irony.Parsing.Construction {
       iniItemSet.Add(augmentedRoot.Productions[0].LR0Items[0]);
       var initialState = FindOrCreateState(iniItemSet);
       var rootNt = augmentedRoot.Productions[0].RValues[0] as NonTerminal; 
-      Data.InitialStates[rootNt] = initialState; 
+      _data.InitialStates[rootNt] = initialState; 
       return initialState;
     }
 
     private void ExpandParserStateList(int initialIndex) {
       // Iterate through states (while new ones are created) and create shift transitions and new states 
-      for (int index = initialIndex; index < Data.States.Count; index++) {
-        var state = Data.States[index];
+      for (int index = initialIndex; index < _data.States.Count; index++) {
+        var state = _data.States[index];
         //Get all possible shifts
         foreach (var term in state.BuilderData.ShiftTerms) {
           var shiftItems = state.BuilderData.ShiftItems.SelectByCurrent(term);
@@ -91,7 +96,7 @@ namespace Irony.Parsing.Construction {
           var shiftedCoreItems = shiftItems.GetShiftedCores(); 
           var newState = FindOrCreateState(shiftedCoreItems);
           //Create shift action
-          var newAction = new ParserAction(ParserActionType.Shift, newState, null);
+          var newAction = new ShiftParserAction(term, newState);
           state.Actions[term] = newAction;
           //Link items in old/new states
           foreach (var shiftItem in shiftItems) {
@@ -107,23 +112,23 @@ namespace Irony.Parsing.Construction {
       if (_stateHash.TryGetValue(key, out state))
         return state;
       //create new state
-      state = new ParserState("S" + Data.States.Count);
+      state = new ParserState("S" + _data.States.Count);
       state.BuilderData = new ParserStateData(state, coreItems);
-      Data.States.Add(state);
+      _data.States.Add(state);
       _stateHash[key] = state;
       return state;
     }
 
     #endregion
 
-    #region computing lookaheads
+    #region Compute transitions, lookbacks, lookaheads
     //We compute only transitions that are really needed to compute lookaheads in inadequate states.
     // We start with reduce items in inadequate state and find their lookbacks - this is initial list of transitions.
     // Then for each transition in the list we check if it has items with nullable tails; for those items we compute
     // lookbacks - these are new or already existing transitons - and so on, we repeat the operation until no new transitions
     // are created. 
-    private void ComputeTransitions() {
-      var newItemsNeedLookbacks = _itemsNeedLookaheads = GetReduceItemsInInadequateState();
+    private void ComputeTransitions(LRItemSet forItems) {
+      var newItemsNeedLookbacks = forItems;
       while(newItemsNeedLookbacks.Count > 0) {
         var newTransitions = CreateLookbackTransitions(newItemsNeedLookbacks);
         newItemsNeedLookbacks = SelectNewItemsThatNeedLookback(newTransitions);
@@ -133,17 +138,16 @@ namespace Irony.Parsing.Construction {
     private LRItemSet SelectNewItemsThatNeedLookback(TransitionList transitions) {
       //Select items with nullable tails that don't have lookbacks yet
       var items = new LRItemSet();
-      foreach(var trans in transitions) {
-        foreach(var item in trans.Items.SelectItemsWithNullableTails()) 
-          if(item.Lookbacks.Count == 0) //only if it does not have lookbacks yet
+      foreach(var trans in transitions)
+        foreach(var item in trans.Items)
+          if (item.Core.TailIsNullable && item.Lookbacks.Count == 0) //only if it does not have lookbacks yet
             items.Add(item);
-      }
       return items; 
     }
 
     private LRItemSet GetReduceItemsInInadequateState() {
       var result = new LRItemSet(); 
-      foreach(var state in Data.States) {
+      foreach(var state in _data.States) {
         if (state.BuilderData.IsInadequate) 
           result.UnionWith(state.BuilderData.ReduceItems); 
       }
@@ -159,27 +163,32 @@ namespace Irony.Parsing.Construction {
       foreach(var sourceItem in sourceItems)
         iniCores.Add(sourceItem.Core.Production.LR0Items[0]);
       //find 
-      foreach(var state in Data.States) {
+      foreach(var state in _data.States) {
         foreach(var iniItem in state.BuilderData.InitialItems) {
-          if (!iniCores.Contains(iniItem.Core)) continue; 
-          var currItem = iniItem;
-          while(currItem != null) {
+          if (!iniCores.Contains(iniItem.Core)) continue;
+          var iniItemNt = iniItem.Core.Production.LValue; // iniItem's non-terminal (left side of production)
+          Transition lookback = null; // local var for lookback - transition over iniItemNt
+          var currItem = iniItem; // iniItem is initial item for all currItem's in the shift chain.
+          while (currItem != null) {
             if(sourceItems.Contains(currItem)) {
-              //iniItem is initial item for currItem (one of source items) 
-              // check if transition for iniItem's non-terminal exists
-              var ntLeft = iniItem.Core.Production.LValue;
-              Transition trans; 
-              if(!state.BuilderData.Transitions.TryGetValue(ntLeft, out trans)) {
-                trans = new Transition(iniItem.State, iniItem.Core.Production.LValue);
-                newTransitions.Add(trans);
+              // We create transitions lazily, only when we actually need them. Check if we have iniItem's transition
+              // in local variable; if not, get it from state's transitions table; if not found, create it.
+              if(lookback == null && !state.BuilderData.Transitions.TryGetValue(iniItemNt, out lookback)) {
+                lookback = new Transition(state, iniItemNt);
+                newTransitions.Add(lookback);
               }
-              //Now for currItem, either add trans to Lookbackbacks, or "include" it into currItem.Transition
-              if(currItem.Core.IsFinal)
-                currItem.Lookbacks.Add(trans);
-              else if(currItem.Transition != null)
-                currItem.Transition.Include(trans);
+              //Now for currItem, either add trans to Lookbacks, or "include" it into currItem.Transition
+              // We need lookbacks ONLY for final items; for non-Final items we need proper Include lists on transitions
+              if (currItem.Core.IsFinal)
+                currItem.Lookbacks.Add(lookback);
+              else // if (currItem.Transition != null)
+                // Note: looks like checking for currItem.Transition is redundant - currItem is either:
+                //    - Final - always the case for the first run of this method;
+                //    - it has a transition after the first run, due to the way we select sourceItems list 
+                //       in SelectNewItemsThatNeedLookback (by transitions)
+                currItem.Transition.Include(lookback);
             }//if 
-            //move to next items
+            //move to next item
             currItem = currItem.ShiftedItem;
           }//while
         }//foreach iniItem
@@ -187,11 +196,10 @@ namespace Irony.Parsing.Construction {
       return newTransitions;
     }
 
-    private void ComputeLookaheads() {
-      var sourceStates = new ParserStateSet(); 
-      foreach(var reduceItem in _itemsNeedLookaheads) {
-        //First collect all states that contribute lookaheads
-        sourceStates.Clear(); 
+    private void ComputeLookaheads(LRItemSet forItems) {
+      foreach(var reduceItem in forItems) {
+        // Find all source states - those that contribute lookaheads
+        var sourceStates = new ParserStateSet();
         foreach(var lookbackTrans in reduceItem.Lookbacks) {
           sourceStates.Add(lookbackTrans.ToState); 
           sourceStates.UnionWith(lookbackTrans.ToState.BuilderData.ReadStateSet);
@@ -215,8 +223,8 @@ namespace Irony.Parsing.Construction {
     #endregion
 
     #region Analyzing and resolving conflicts 
-    private void ComputeAndResolveConflicts() {
-      foreach(var state in Data.States) {
+    private void ComputeConflicts() {
+      foreach(var state in _data.States) {
         if(!state.BuilderData.IsInadequate)
           continue;
         //first detect conflicts
@@ -226,134 +234,92 @@ namespace Irony.Parsing.Construction {
         //reduce/reduce --------------------------------------------------------------------------------------
         foreach(var item in stateData.ReduceItems) {
           foreach(var lkh in item.Lookaheads) {
-            if(allLkhds.Contains(lkh)) {
+            if(allLkhds.Contains(lkh))
               state.BuilderData.Conflicts.Add(lkh);
-            }
             allLkhds.Add(lkh);
           }//foreach lkh
         }//foreach item
+
         //shift/reduce ---------------------------------------------------------------------------------------
         foreach(var term in stateData.ShiftTerminals)
           if(allLkhds.Contains(term)) {
             stateData.Conflicts.Add(term);
           }
-
-        //Now resolve conflicts by hints and precedence -------------------------------------------------------
-        if(stateData.Conflicts.Count > 0) {
-          //Hints
-          foreach (var conflict in stateData.Conflicts)
-            ResolveConflictByHints(state, conflict);
-          stateData.Conflicts.ExceptWith(state.BuilderData.ResolvedConflicts); 
-          //Precedence
-          foreach (var conflict in stateData.Conflicts)
-            ResolveConflictByPrecedence(state, conflict);
-          stateData.Conflicts.ExceptWith(state.BuilderData.ResolvedConflicts); 
-          //if we still have conflicts, report and assign default action
-          if (stateData.Conflicts.Count > 0)
-            ReportAndCreateDefaultActionsForConflicts(state); 
-        }//if Conflicts.Count > 0
       }
     }//method
 
-    private void ResolveConflictByHints(ParserState state, Terminal conflict) {
-      var stateData = state.BuilderData;
-      //reduce hints
-      var reduceItems = stateData.ReduceItems.SelectByLookahead(conflict);
-      foreach(var reduceItem in reduceItems)
-        if(reduceItem.Core.Hints.Find(h => h.HintType == HintType.ResolveToReduce) != null) {
-          state.Actions[conflict] = new ParserAction(ParserActionType.Reduce, null, reduceItem.Core.Production);
-          state.BuilderData.ResolvedConflicts.Add(conflict);
-          return; 
-        }
-      
-      //Shift hints
-      var shiftItems = stateData.ShiftItems.SelectByCurrent(conflict);
-      foreach (var shiftItem in shiftItems)
-        if(shiftItem.Core.Hints.Find(h => h.HintType == HintType.ResolveToShift) != null) {
-          //shift action is already there
-          state.BuilderData.ResolvedConflicts.Add(conflict);
-          return; 
-        }
-      //code hints
-      // first prepare data for conflict action: reduceProduction (for possible reduce) and newState (for possible shift)
-      var reduceProduction = reduceItems.First().Core.Production; //take first of reduce productions
-      ParserState newState = (state.Actions.ContainsKey(conflict) ? state.Actions[conflict].NewState : null); 
-      // Get all items that might contain hints;
-      var allItems = new LRItemList();
-      allItems.AddRange(state.BuilderData.ShiftItems.SelectByCurrent(conflict)); 
-      allItems.AddRange(state.BuilderData.ReduceItems.SelectByLookahead(conflict)); 
-      // Scan all items and try to find hint with resolution type Code
-      foreach (var item in allItems)
-        if(item.Core.Hints.Find(h => h.HintType == HintType.ResolveInCode) != null) {
-          state.Actions[conflict] = new ParserAction(ParserActionType.Code, newState, reduceProduction);
-          state.BuilderData.ResolvedConflicts.Add(conflict);
-          return; 
-        }
-    }
+    private void ApplyHints() {
+      foreach (var state in _data.States) {
+        var stateData = state.BuilderData;
+        //Add automatic precedence hints
+        if (stateData.Conflicts.Count > 0)
+          foreach (var conflict in stateData.Conflicts.ToList())
+            if (conflict.Flags.IsSet(TermFlags.IsOperator)) {
+              //Find any reduce item with this lookahead and add PrecedenceHint
+              var reduceItem = stateData.ReduceItems.SelectByLookahead(conflict).First();
+              var precHint = new PrecedenceHint();
+              reduceItem.Core.Hints.Add(precHint);
+            }
+        // Apply (activate) hints - these should resolve conflicts as well
+        foreach (var item in state.BuilderData.AllItems)
+          foreach (var hint in item.Core.Hints)
+            hint.Apply(_language, item);
 
-    private void ResolveConflictByPrecedence(ParserState state, Terminal conflict) {
-      if (!conflict.FlagIsSet(TermFlags.IsOperator)) return; 
-      var stateData = state.BuilderData;
-      if (!stateData.ShiftTerminals.Contains(conflict)) return; //it is not shift-reduce
-      var shiftAction = state.Actions[conflict];
-      //now get shift items for the conflict
-      var shiftItems = stateData.ShiftItems.SelectByCurrent(conflict);
-      //get reduce item
-      var reduceItems = stateData.ReduceItems.SelectByLookahead(conflict);
-      if (reduceItems.Count > 1) return; // if it is reduce-reduce conflict, we cannot fix it by precedence
-      var reduceItem = reduceItems.First(); 
-      shiftAction.ChangeToOperatorAction(reduceItem.Core.Production); 
-      stateData.ResolvedConflicts.Add(conflict);
+      }//foreach
     }//method
 
     //Resolve to default actions
-    private void ReportAndCreateDefaultActionsForConflicts(ParserState state) {
-      var shiftReduceConflicts = state.BuilderData.GetShiftReduceConflicts();
-      var reduceReduceConflicts = state.BuilderData.GetReduceReduceConflicts();
-      var stateData = state.BuilderData;
-      if (shiftReduceConflicts.Count > 0) 
-        _language.Errors.Add(GrammarErrorLevel.Conflict, state, Resources.ErrSRConflict, state, shiftReduceConflicts.ToString());
-      if (reduceReduceConflicts.Count > 0)
-        _language.Errors.Add(GrammarErrorLevel.Conflict, state, Resources.ErrRRConflict, state, reduceReduceConflicts.ToString());
-      //Create default actions for these conflicts. For shift-reduce, default action is shift, and shift action already
-      // exist for all shifts from the state, so we don't need to do anything, only report it
-      //For reduce-reduce create reduce actions for the first reduce item (whatever comes first in the set). 
-      foreach (var conflict in reduceReduceConflicts) {
-        var reduceItems = stateData.ReduceItems.SelectByLookahead(conflict);
-        var firstProd = reduceItems.First().Core.Production;
-        var action = new ParserAction(ParserActionType.Reduce, null, firstProd);
-        state.Actions[conflict] = action;
+    private void HandleUnresolvedConflicts() {
+      foreach (var state in _data.States) {
+        if (state.BuilderData.Conflicts.Count == 0) 
+          continue; 
+        var shiftReduceConflicts = state.BuilderData.GetShiftReduceConflicts();
+        var reduceReduceConflicts = state.BuilderData.GetReduceReduceConflicts();
+        var stateData = state.BuilderData;
+        if (shiftReduceConflicts.Count > 0)
+          _language.Errors.Add(GrammarErrorLevel.Conflict, state, Resources.ErrSRConflict, state, shiftReduceConflicts.ToString());
+        if (reduceReduceConflicts.Count > 0)
+          _language.Errors.Add(GrammarErrorLevel.Conflict, state, Resources.ErrRRConflict, state, reduceReduceConflicts.ToString());
+        //Create default actions for these conflicts. For shift-reduce, default action is shift, and shift action already
+        // exist for all shifts from the state, so we don't need to do anything, only report it
+        //For reduce-reduce create reduce actions for the first reduce item (whatever comes first in the set). 
+        foreach (var conflict in reduceReduceConflicts) {
+          var reduceItems = stateData.ReduceItems.SelectByLookahead(conflict);
+          var firstProd = reduceItems.First().Core.Production;
+          var action = new ReduceParserAction(firstProd);
+          state.Actions[conflict] = action;
+        }
+        //stateData.Conflicts.Clear(); -- do not clear them, let the set keep the auto-resolved conflicts, may find more use for this later
       }
-      //Update ResolvedConflicts and Conflicts sets
-      stateData.ResolvedConflicts.UnionWith(shiftReduceConflicts);
-      stateData.ResolvedConflicts.UnionWith(reduceReduceConflicts);
-      stateData.Conflicts.ExceptWith(stateData.ResolvedConflicts);
     }
 
     #endregion
 
     #region final actions: creating remaining reduce actions, computing expected terminals, cleaning up state data
+    //Create reduce actions for states with a single reduce item (and no shifts)
     private void CreateRemainingReduceActions() {
-      foreach (var state in Data.States) {
+      foreach (var state in _data.States) {
+        if (state.DefaultAction != null) continue; 
         var stateData = state.BuilderData;
         if (stateData.ShiftItems.Count == 0 && stateData.ReduceItems.Count == 1) {
-          state.DefaultAction = new ParserAction(ParserActionType.Reduce, null, stateData.ReduceItems.First().Core.Production);
-          continue; 
-        } 
-        //now create actions
+          state.DefaultAction = ReduceParserAction.Create(stateData.ReduceItems.First().Core.Production);
+          continue; //next state; if we have default reduce action, we don't need to fill actions dictionary for lookaheads
+        }
+        //create actions
         foreach (var item in state.BuilderData.ReduceItems) {
-          var action = new ParserAction(ParserActionType.Reduce, null, item.Core.Production);
+          var action = ReduceParserAction.Create(item.Core.Production);
           foreach (var lkh in item.Lookaheads) {
             if (state.Actions.ContainsKey(lkh)) continue;
             state.Actions[lkh] = action;
           }
         }//foreach item
+
       }//foreach state
     }
 
     //Note that for states with a single reduce item the result is empty 
     private void ComputeStatesExpectedTerminals() {
-      foreach (var state in Data.States) {
+      foreach (var state in _data.States) {
         state.ExpectedTerminals.UnionWith(state.BuilderData.ShiftTerminals);
         //Add lookaheads from reduce items
         foreach (var reduceItem in state.BuilderData.ReduceItems) 
@@ -368,7 +334,7 @@ namespace Irony.Parsing.Construction {
     }
 
     public void CleanupStateData() {
-      foreach (var state in Data.States)
+      foreach (var state in _data.States)
         state.ClearData();
     }
     #endregion
@@ -407,6 +373,46 @@ namespace Irony.Parsing.Construction {
       return 1;
     }
     #endregion
+
+
+    #region comments
+    // Computes set of expected terms in a parser state. While there may be extended list of symbols expected at some point,
+    // we want to reorganize and reduce it. For example, if the current state expects all arithmetic operators as an input,
+    // it would be better to not list all operators (+, -, *, /, etc) but simply put "operator" covering them all. 
+    // To achieve this grammar writer can group operators (or any other terminals) into named groups using Grammar's methods
+    // AddTermReportGroup, AddNoReportGroup etc. Then instead of reporting each operator separately, Irony would include 
+    // a single "group name" to represent them all.
+    // The "expected report set" is not computed during parser construction (it would bite considerable time), but on demand during parsing, 
+    // when error is detected and the expected set is actually needed for error message. 
+    // Multi-threading concerns. When used in multi-threaded environment (web server), the LanguageData would be shared in 
+    // application-wide cache to avoid rebuilding the parser data on every request. The LanguageData is immutable, except 
+    // this one case - the expected sets are constructed late by CoreParser on the when-needed basis. 
+    // We don't do any locking here, just compute the set and on return from this function the state field is assigned. 
+    // We assume that this field assignment is an atomic, concurrency-safe operation. The worst thing that might happen
+    // is "double-effort" when two threads start computing the same set around the same time, and the last one to finish would 
+    // leave its result in the state field. 
+    #endregion
+    internal static StringSet ComputeGroupedExpectedSetForState(Grammar grammar, ParserState state) {
+      var terms = new TerminalSet();
+      terms.UnionWith(state.ExpectedTerminals);
+      var result = new StringSet();
+      //Eliminate no-report terminals
+      foreach (var group in grammar.TermReportGroups)
+        if (group.GroupType == TermReportGroupType.DoNotReport)
+          terms.ExceptWith(group.Terminals);
+      //Add normal and operator groups
+      foreach (var group in grammar.TermReportGroups)
+        if ((group.GroupType == TermReportGroupType.Normal || group.GroupType == TermReportGroupType.Operator) &&
+             terms.Overlaps(group.Terminals)) {
+          result.Add(group.Alias);
+          terms.ExceptWith(group.Terminals);
+        }
+      //Add remaining terminals "as is"
+      foreach (var terminal in terms)
+        result.Add(terminal.ErrorAlias);
+      return result;
+    }
+
 
   }//class
 
